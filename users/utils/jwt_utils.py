@@ -1,8 +1,11 @@
 from datetime import datetime, timedelta
 import jwt
 import os
-SECRET_KEY = os.environ.get("SECRET_KEY", "default-fallback")
+from rest_framework.exceptions import AuthenticationFailed
+from django.conf import settings
+from users.mongo.user import User
 
+SECRET_KEY = os.environ.get("SECRET_KEY", "default-fallback")
 
 def generate_token(user_id):
     """
