@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Delivery Tracker</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        #map-container {
+            flex: 1;
+            height: 500px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        #map {
+            height: 100%;
+            border-radius: 5px;
+        }
+        #status-container {
+            flex: 1;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .status-update {
+            margin: 10px 0;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+            border-left: 4px solid #4CAF50;
+        }
+        .location-update {
+            border-left-color: #2196F3;
+        }
+        .delivery-info {
+            margin-bottom: 20px;
+            padding: 20px;
+            background-color: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 5px;
+        }
+        .timestamp {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Delivery Tracker</h1>
+    <div class="delivery-info" id="delivery-info">
+        <!-- Delivery info will be populated here -->
+    </div>
+    <div class="container">
+        <div id="map-container">
+            <div id="map"></div>
+        </div>
+        <div id="status-container">
+            <h2>Updates</h2>
+            <div id="updates"></div>
+        </div>
+    </div>
+
+    <script>
+        const deliveryId = '{{ delivery_id }}';
+        const updatesContainer = document.getElementById('updates');
+        const deliveryInfoContainer = document.getElementById('delivery-info');
+        let map;
+        let marker;
+        let deliveryPath = [];
+
+        // Initialize map
+        map = L.map('map').setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        function updateDeliveryInfo(delivery) {
+            deliveryInfoContainer.innerHTML = `
+                <h2>${delivery.title || 'Delivery'} #${delivery.id}</h2>
+                <p><strong>Recipient:</strong> ${delivery.recipient_name}</p>
+                <p><strong>Current Status:</strong> ${delivery.status}</p>
+                <p><strong>Last Updated:</strong> ${new Date(delivery.last_updated).toLocaleString()}</p>
+            `;
+        }
+
+        function updateMap(location) {
+            const coords = location.coordinates;
+            const latLng = [coords[1], coords[0]]; // Convert [lon, lat] to [lat, lon]
+
+            if (!marker) {
+                marker = L.marker(latLng).addTo(map);
+                map.setView(latLng, 13);
+            } else {
+                marker.setLatLng(latLng);
+            }
+
+            // Add point to delivery path
+            deliveryPath.push(latLng);
+
+            // Update or create the path line
+            if (window.pathLine) {
+                window.pathLine.setLatLngs(deliveryPath);
+            } else {
+                window.pathLine = L.polyline(deliveryPath, {
+                    color: '#2196F3',
+                    weight: 3,
+                    opacity: 0.7
+                }).addTo(map);
+            }
+
+            // Fit map bounds to show full path
+            if (deliveryPath.length > 1) {
+                map.fitBounds(window.pathLine.getBounds());
+            }
+        }
+
+        // Create WebSocket connection
+        const socket = new WebSocket(
+            'ws://' + window.location.host + '/ws/delivery/' + deliveryId + '/'
+        );
+
+        socket.onopen = function(e) {
+            console.log('Connected to WebSocket');
+            socket.send(JSON.stringify({
+                'type': 'subscribe_delivery'
+            }));
+        };
+
+        socket.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+            
+            if (data.type === 'delivery_info') {
+                const delivery = data.delivery;
+                updateDeliveryInfo(delivery);
+                if (delivery.location) {
+                    updateMap(delivery.location);
+                }
+            }
+            else if (data.type === 'delivery_update') {
+                const delivery = data.delivery;
+                const updateType = data.update_type;
+                const timestamp = data.timestamp;
+                
+                // Update the delivery info section
+                updateDeliveryInfo(delivery);
+
+                // Create update notification
+                const update = document.createElement('div');
+                update.className = `status-update ${updateType === 'location' ? 'location-update' : ''}`;
+                
+                if (updateType === 'location') {
+                    const coords = delivery.current_location.coordinates;
+                    update.innerHTML = `
+                        <strong>Location Update:</strong><br>
+                        Coordinates: [${coords[1].toFixed(4)}, ${coords[0].toFixed(4)}]<br>
+                        <div class="timestamp">${new Date(timestamp).toLocaleString()}</div>
+                    `;
+                    updateMap(delivery.current_location);
+                } else {
+                    update.innerHTML = `
+                        <strong>Status Update:</strong><br>
+                        New Status: ${delivery.status}<br>
+                        <div class="timestamp">${new Date(timestamp).toLocaleString()}</div>
+                    `;
+                }
+                
+                updatesContainer.insertBefore(update, updatesContainer.firstChild);
+            }
+        };
+
+        socket.onclose = function(e) {
+            console.error('WebSocket closed unexpectedly');
+        };
+    </script>
+</body>
+</html> 
